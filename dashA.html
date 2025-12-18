@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>比賽即時監控 Dashboard</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system;
+  background: #0f0f0f;
+  color: #f0f0f0;
+}
+
+/* 裁判模式按鈕 */
+#judgeToggle {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  background: #3498db;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.judge-mode #judgeToggle {
+  background: #555;
+}
+
+.container {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+  padding: 12px;
+  height: 100vh;
+}
+
+.card {
+  background: #1a1a1a;
+  border-radius: 10px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+/* 裁判模式 */
+.judge-mode .container { grid-template-columns: 1fr; }
+.judge-mode #teamView { display: none; }
+
+h2 { font-size: 26px; margin: 6px 0 12px; }
+
+/* 左邊 */
+.team {
+  border-bottom: 1px solid #333;
+  padding: 8px 0;
+}
+.team-title {
+  font-size: 22px;
+  font-weight: 700;
+}
+.member {
+  display: inline-block;
+  min-width: 46px;
+  margin: 4px;
+  padding: 6px 0;
+  text-align: center;
+  font-weight: 700;
+  border-radius: 6px;
+  color: #000;
+}
+.green { background:#2ecc71; }
+.red { background:#e74c3c; }
+
+/* 右邊 */
+.event { margin-bottom: 18px; }
+.event strong {
+  font-size: 22px;
+  display: block;
+  margin-bottom: 6px;
+}
+.event-line {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 8px 0;
+  cursor: pointer;
+}
+.event-line.incomplete span { color:#ff4d4d; }
+
+/* Modal */
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.8);
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+.modal-content {
+  background: #1a1a1a;
+  width: 90%;
+  max-width: 600px;
+  border-radius: 10px;
+  padding: 16px;
+}
+#modalTitle { font-size: 24px; margin-bottom: 12px; }
+.close-btn {
+  float: right;
+  font-size: 22px;
+  cursor: pointer;
+}
+.list-title {
+  font-size: 20px;
+  margin: 12px 0 6px;
+}
+</style>
+</head>
+
+<body>
+
+<button id="judgeToggle" onclick="toggleJudgeMode()">
+  👩‍⚖️ 進入裁判模式
+</button>
+
+<div class="container">
+  <div class="card" id="teamView">
+    <h2>🏁 小隊即時狀態</h2>
+  </div>
+  <div class="card" id="eventView">
+    <h2>🎯 比賽項目</h2>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-content">
+    <span class="close-btn" onclick="closeModal()">✖</span>
+    <div id="modalTitle"></div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+/* ===== CSV ===== */
+const SHEET_CSV_URL =
+"https://docs.google.com/spreadsheets/d/e/2PACX-1vRqSPDvPhygiENSoBsVXQLMmy9kdwMNcFGYXZ7KSoLvGAVoLlFyUIKusstepG2Mz41o403RSl2a3c6G/pub?gid=1769609556&single=true&output=csv";
+
+/* ===== 規則 ===== */
+const EVENT_REQUIRE = 6;
+const REFRESH_INTERVAL = 30000;
+const EVENTS = ["項目一","項目二","項目三","項目四","項目五","項目六"];
+
+/* ===== 模式 ===== */
+const params = new URLSearchParams(location.search);
+const isJudgeMode = params.get("judge") === "1";
+if (isJudgeMode) document.body.classList.add("judge-mode");
+
+const btn = document.getElementById("judgeToggle");
+btn.textContent = isJudgeMode ? "⬅️ 返回控制台" : "👩‍⚖️ 進入裁判模式";
+
+/* ===== 切換 ===== */
+function toggleJudgeMode() {
+  if (document.body.classList.contains("judge-mode")) {
+    params.delete("judge");
+  } else {
+    params.set("judge","1");
+  }
+  location.search = params.toString();
+}
+
+let latest = {};
+
+/* ===== 讀資料 ===== */
+function loadData() {
+  fetch(SHEET_CSV_URL + "&_=" + Date.now())
+    .then(r => r.text())
+    .then(parseCSV);
+}
+
+function parseCSV(csv) {
+  const rows = csv.trim().split("\n").slice(1).map(r=>r.split(","));
+  const data = {};
+
+  rows.forEach(r=>{
+    const memberId = r[2];
+    const action = r[3];
+    if (!memberId || !action) return;
+
+    const team = memberId.slice(0,2);
+    const member = memberId.slice(2);
+
+    data[team] ??= { members:new Set(), events:{} };
+
+    if (action === "首次報到") {
+      data[team].members.add(member);
+    }
+
+    if (EVENTS.includes(action)) {
+      data[team].events[action] ??= new Set();
+      data[team].events[action].add(member);
+    }
+  });
+
+  latest = data;
+  renderTeams();
+  renderEvents();
+}
+
+/* ===== 左邊 ===== */
+function renderTeams() {
+  const root = document.getElementById("teamView");
+  root.innerHTML = "<h2>🏁 小隊即時狀態</h2>";
+
+  Object.keys(latest).sort().forEach(team=>{
+    const members = [...latest[team].members];
+    if (!members.length) return;
+
+    const div = document.createElement("div");
+    div.className = "team";
+    div.innerHTML = `<div class="team-title">隊伍 ${team}｜${members.length} 人</div>`;
+    members.forEach(m=>{
+      div.innerHTML += `<span class="member green">${m}</span>`;
+    });
+    root.appendChild(div);
+  });
+}
+
+/* ===== 右邊 ===== */
+function renderEvents() {
+  const root = document.getElementById("eventView");
+  root.innerHTML = "<h2>🎯 比賽項目</h2>";
+
+  EVENTS.forEach(ev=>{
+    const teams = [];
+
+    Object.keys(latest).forEach(team=>{
+      const present = latest[team].events[ev];
+      if (present && present.size > 0) {
+        teams.push({ team, present:[...present], members:[...latest[team].members] });
+      }
+    });
+
+    if (!teams.length) return;
+
+    const div = document.createElement("div");
+    div.className = "event";
+    div.innerHTML = `<strong>${ev}</strong>`;
+
+    teams.forEach(t=>{
+      const count = t.present.length;
+      const line = document.createElement("div");
+      line.className = "event-line";
+
+      if (count >= EVENT_REQUIRE) {
+        line.innerHTML = `隊伍 ${t.team} ✅`;
+      } else {
+        line.classList.add("incomplete");
+        line.innerHTML = `隊伍 ${t.team} <span>${count}/${EVENT_REQUIRE}</span>`;
+        line.onclick = ()=>showMissing(ev,t);
+      }
+      div.appendChild(line);
+    });
+
+    root.appendChild(div);
+  });
+}
+
+/* ===== Modal ===== */
+function showMissing(ev, t) {
+  document.getElementById("modal").style.display = "flex";
+  document.getElementById("modalTitle").textContent = `${ev}｜隊伍 ${t.team}`;
+
+  const absent = t.members.filter(m=>!t.present.includes(m));
+
+  document.getElementById("modalBody").innerHTML = `
+    <div class="list-title">✅ 已報到</div>
+    ${t.present.map(m=>`<span class="member green">${m}</span>`).join("")}
+    <div class="list-title">❌ 未報到</div>
+    ${absent.map(m=>`<span class="member red">${m}</span>`).join("")}
+  `;
+}
+
+function closeModal(){
+  document.getElementById("modal").style.display="none";
+}
+
+loadData();
+setInterval(loadData, REFRESH_INTERVAL);
+</script>
+
+</body>
+</html>
