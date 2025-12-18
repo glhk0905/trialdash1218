@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>比賽即時監控 Dashboard</title>
+
+<style>
+body {
+  margin:0;
+  font-family:system-ui,-apple-system;
+  background:#0f0f0f;
+  color:#f0f0f0;
+}
+
+/* 頂 Bar */
+#topBar{
+  position:sticky;
+  top:0;
+  z-index:1000;
+  background:#0f0f0f;
+  padding:10px 16px;
+  display:flex;
+  justify-content:flex-end;
+  gap:12px;
+}
+#judgeToggle{
+  background:#3498db;
+  color:#fff;
+  border:none;
+  border-radius:8px;
+  padding:8px 12px;
+  font-weight:700;
+  cursor:pointer;
+}
+.judge-mode #judgeToggle{ background:#555; }
+#lastUpdate{ color:#ccc; font-size:14px; }
+
+/* Layout */
+.container{
+  display:grid;
+  grid-template-columns:2fr 1fr;
+  gap:12px;
+  padding:12px;
+  height:calc(100vh - 56px);
+}
+.card{
+  background:#1a1a1a;
+  border-radius:10px;
+  padding:12px;
+  overflow-y:auto;
+}
+.judge-mode .container{ grid-template-columns:1fr; }
+.judge-mode #teamView{ display:none; }
+
+/* 小隊 */
+.team{
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:12px;
+  border:1px solid #333;
+}
+.team-alert{
+  background:#3a0f0f;
+  border:2px solid #e74c3c;
+}
+.team-title{
+  font-size:22px;
+  font-weight:700;
+  margin-bottom:6px;
+}
+
+/* 成員 */
+.member{
+  display:inline-block;
+  min-width:44px;
+  margin:4px;
+  padding:6px 0;
+  border-radius:6px;
+  text-align:center;
+  font-weight:700;
+  color:#000;
+}
+.green{ background:#2ecc71; }
+.yellow{ background:#f1c40f; }
+.red{ background:#e74c3c; }
+
+/* Legend */
+.legend span{
+  display:inline-block;
+  margin-right:10px;
+}
+
+/* Event */
+.event-line{
+  font-size:22px;
+  font-weight:700;
+  margin:10px 0;
+  cursor:pointer;
+}
+.event-line.incomplete span{ color:#ff4d4d; }
+
+/* Modal */
+.modal{
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.8);
+  display:none;
+  align-items:center;
+  justify-content:center;
+}
+.modal-content{
+  background:#1a1a1a;
+  width:90%;
+  max-width:600px;
+  border-radius:10px;
+  padding:16px;
+}
+.close-btn{
+  float:right;
+  font-size:22px;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div id="topBar">
+  <button id="judgeToggle" onclick="toggleJudgeMode()">👩‍⚖️ 進入裁判模式</button>
+  <div id="lastUpdate">—</div>
+</div>
+
+<div class="container">
+  <div class="card" id="teamView">
+    <h2>🏁 小隊即時狀態</h2>
+    <div class="legend">
+      <span class="member green">綠</span> 已報到＋參賽
+      <span class="member yellow">黃</span> 未報到但參賽
+      <span class="member red">紅</span> 已報到未參賽
+    </div>
+  </div>
+  <div class="card" id="eventView">
+    <h2>🎯 比賽項目</h2>
+  </div>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-content">
+    <span class="close-btn" onclick="closeModal()">✖</span>
+    <h3 id="modalTitle"></h3>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script>
+const CSV_URL = "YOUR_CSV_URL_HERE";
+const EVENTS=["項目一","項目二","項目三","項目四","項目五","項目六"];
+const NEED=6;
+const REFRESH=30000;
+
+const params=new URLSearchParams(location.search);
+if(params.get("judge")==="1") document.body.classList.add("judge-mode");
+
+function toggleJudgeMode(){
+  if(document.body.classList.contains("judge-mode")) params.delete("judge");
+  else params.set("judge","1");
+  location.search=params.toString();
+}
+
+let latest={};
+
+function load(){
+  fetch(CSV_URL+"&_="+Date.now()).then(r=>r.text()).then(parse);
+}
+function parse(csv){
+  const rows=csv.trim().split("\n").slice(1).map(r=>r.split(","));
+  const d={};
+  rows.forEach(r=>{
+    const id=r[2], act=r[3];
+    if(!id||!act) return;
+    const t=id.slice(0,2), m=id.slice(2);
+    d[t]??={first:new Set(),play:new Set(),all:new Set(),events:{}};
+    d[t].all.add(m);
+    if(act==="首次報到") d[t].first.add(m);
+    if(EVENTS.includes(act)){
+      d[t].play.add(m);
+      d[t].events[act]??=new Set();
+      d[t].events[act].add(m);
+    }
+  });
+  latest=d;
+  renderTeams();
+  renderEvents();
+  document.getElementById("lastUpdate").textContent=
+    "最後更新："+new Date().toLocaleTimeString("zh-HK",{hour12:false});
+}
+
+function renderTeams(){
+  const root=document.getElementById("teamView");
+  root.querySelectorAll(".team").forEach(e=>e.remove());
+
+  Object.keys(latest).sort().forEach(t=>{
+    const f=latest[t].first.size;
+    const p=latest[t].play.size;
+    const available=Math.max(f,p);
+    if(available===0) return;
+
+    const div=document.createElement("div");
+    div.className="team";
+    if(available<NEED) div.classList.add("team-alert");
+
+    div.innerHTML=`<div class="team-title">
+      隊伍 ${t}｜首次報到 ${f}｜已參賽 ${p}
+    </div>`;
+
+    [...latest[t].all].sort().forEach(m=>{
+      let c="red";
+      if(!latest[t].first.has(m)&&latest[t].play.has(m)) c="yellow";
+      else if(latest[t].first.has(m)&&latest[t].play.has(m)) c="green";
+      div.innerHTML+=`<span class="member ${c}">${m}</span>`;
+    });
+
+    root.appendChild(div);
+  });
+}
+
+function renderEvents(){
+  const root=document.getElementById("eventView");
+  root.innerHTML="<h2>🎯 比賽項目</h2>";
+  EVENTS.forEach(ev=>{
+    let set=new Set();
+    Object.values(latest).forEach(t=>{
+      t.events[ev]?.forEach(m=>set.add(m));
+    });
+    const line=document.createElement("div");
+    line.className="event-line"+(set.size<NEED?" incomplete":"");
+    line.innerHTML=`${ev}：<span>${set.size}/${NEED}</span>`;
+    line.onclick=()=>openModal(ev,set);
+    root.appendChild(line);
+  });
+}
+
+function openModal(ev,set){
+  document.getElementById("modalTitle").textContent=ev;
+  document.getElementById("modalBody").innerHTML=
+    "已完成："+[...set].join(" ");
+  document.getElementById("modal").style.display="flex";
+}
+function closeModal(){
+  document.getElementById("modal").style.display="none";
+}
+
+load();
+setInterval(load,REFRESH);
+</script>
+
+</body>
+</html>
