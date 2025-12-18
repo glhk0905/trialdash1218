@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>比賽即時監控 Dashboard</title>
+
+<style>
+body{
+  margin:0;
+  font-family:system-ui,-apple-system;
+  background:#0f0f0f;
+  color:#f0f0f0;
+}
+
+/* ===== Top Bar ===== */
+#topBar{
+  position:sticky;
+  top:0;
+  z-index:1000;
+  background:#0f0f0f;
+  padding:10px 16px;
+  display:flex;
+  justify-content:flex-end;
+  align-items:center;
+  gap:12px;
+}
+button{
+  border:none;
+  border-radius:8px;
+  padding:8px 12px;
+  font-weight:700;
+  cursor:pointer;
+}
+#judgeToggle{ background:#3498db;color:#fff; }
+#debugToggle{ background:#27ae60;color:#fff; }
+#lastUpdate{ font-size:14px;color:#ccc; }
+
+/* ===== Layout ===== */
+.container{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  padding:12px;
+  height:calc(100vh - 56px);
+}
+.card{
+  background:#1a1a1a;
+  border-radius:10px;
+  padding:12px;
+  overflow-y:auto;
+}
+
+/* ===== Team ===== */
+.team{
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:12px;
+  border:1px solid #333;
+}
+.team-alert{
+  background:#3a0f0f;
+  border:2px solid #e74c3c;
+}
+.team-title{
+  font-size:20px;
+  font-weight:700;
+  margin-bottom:6px;
+}
+
+/* ===== Members ===== */
+.member{
+  display:inline-block;
+  min-width:40px;
+  margin:4px;
+  padding:6px 0;
+  border-radius:6px;
+  text-align:center;
+  font-weight:700;
+  color:#000;
+}
+.green{ background:#2ecc71; }
+
+/* ===== Event ===== */
+.event{
+  margin-bottom:14px;
+}
+.event h3{ margin:6px 0; }
+.event-team{ margin-left:12px;font-size:15px; }
+.event-team.incomplete{ color:#ff4d4d; }
+
+/* ===== Debug ===== */
+#debugPanel{
+  position:fixed;
+  bottom:10px;
+  right:10px;
+  background:#111;
+  color:#0f0;
+  font-family:monospace;
+  font-size:12px;
+  padding:10px;
+  border-radius:8px;
+  border:1px solid #0f0;
+  display:none;
+  z-index:9999;
+  max-width:40vw;
+  max-height:50vh;
+  overflow:auto;
+  white-space:pre-wrap;
+}
+</style>
+</head>
+
+<body>
+
+<div id="topBar">
+  <button id="judgeToggle" onclick="toggleJudge()">👩‍⚖️ 裁判模式</button>
+  <button id="debugToggle" onclick="toggleDebug()">🧪 Debug</button>
+  <div id="lastUpdate">—</div>
+</div>
+
+<div class="container">
+  <div class="card" id="teamView"><h2>🏁 小隊即時狀態</h2></div>
+  <div class="card" id="eventView"><h2>🎯 比賽項目</h2></div>
+</div>
+
+<div id="debugPanel"></div>
+
+<script>
+/* ===== Config ===== */
+const CSV_URL="https://docs.google.com/spreadsheets/d/e/2PACX-1vRqSPDvPhygiENSoBsVXQLMmy9kdwMNcFGYXZ7KSoLvGAVoLlFyUIKusstepG2Mz41o403RSl2a3c6G/pub?gid=1769609556&single=true&output=csv";
+const EVENTS=["項目一","項目二","項目三","項目四","項目五","項目六"];
+const NEED=6;
+const REFRESH=20000;
+
+/* ===== State ===== */
+const params=new URLSearchParams(location.search);
+let debug=params.get("debug")==="1";
+let latest={};
+let lastCsvLines=[];
+
+/* ===== UI ===== */
+if(debug) document.getElementById("debugPanel").style.display="block";
+
+function toggleDebug(){
+  debug=!debug;
+  document.getElementById("debugPanel").style.display=debug?"block":"none";
+}
+function toggleJudge(){
+  params.set("judge","1");
+  location.search=params.toString();
+}
+
+/* ===== Load ===== */
+function load(){
+  fetch(CSV_URL+"&_="+Date.now())
+    .then(r=>r.text())
+    .then(parse);
+}
+
+function parse(csv){
+  const lines=csv.trim().split("\n");
+  lastCsvLines=lines.slice(-5);   // ✅ 最後 5 行原文
+  const rows=lines.slice(1).map(r=>r.split(","));
+  const data={};
+
+  rows.forEach(r=>{
+    const id=r[2],act=r[3];
+    if(!id||!act) return;
+    const t=id.slice(0,2),m=id.slice(2);
+    data[t]??={all:new Set(),events:{}};
+    data[t].all.add(m);
+    if(EVENTS.includes(act)){
+      data[t].events[act]??=new Set();
+      data[t].events[act].add(m);
+    }
+  });
+
+  latest=data;
+  renderTeams();
+  renderEvents();
+
+  const time=new Date().toLocaleTimeString("zh-HK",{hour12:false});
+  document.getElementById("lastUpdate").textContent="最後更新："+time;
+
+  if(debug){
+    document.getElementById("debugPanel").textContent=
+`🧪 DEBUG PANEL
+CSV 總行數 : ${lines.length-1}
+小隊數量   : ${Object.keys(latest).length}
+更新時間   : ${time}
+
+--- 最後 5 行 CSV ---
+${lastCsvLines.join("\n")}
+`;
+  }
+}
+
+/* ===== Render ===== */
+function renderTeams(){
+  const root=document.getElementById("teamView");
+  root.innerHTML="<h2>🏁 小隊即時狀態</h2>";
+  Object.keys(latest).sort().forEach(t=>{
+    const total=latest[t].all.size;
+    const div=document.createElement("div");
+    div.className="team"+(total<NEED?" team-alert":"");
+    div.innerHTML=`<div class="team-title">隊伍 ${t}｜人數 ${total}</div>`;
+    [...latest[t].all].sort().forEach(m=>{
+      div.innerHTML+=`<span class="member green">${m}</span>`;
+    });
+    root.appendChild(div);
+  });
+}
+
+function renderEvents(){
+  const root=document.getElementById("eventView");
+  root.innerHTML="<h2>🎯 比賽項目</h2>";
+  EVENTS.forEach(ev=>{
+    const evDiv=document.createElement("div");
+    evDiv.className="event";
+    evDiv.innerHTML=`<h3>${ev}</h3>`;
+    Object.keys(latest).sort().forEach(t=>{
+      const set=latest[t].events[ev]||new Set();
+      const miss=[...latest[t].all].filter(m=>!set.has(m));
+      const line=document.createElement("div");
+      line.className="event-team"+(set.size<NEED?" incomplete":"");
+      line.textContent=
+        `隊伍 ${t}：${set.size}/6`+
+        (set.size<6?`（欠：${miss.join(" ")}）`:" ✅");
+      evDiv.appendChild(line);
+    });
+    root.appendChild(evDiv);
+  });
+}
+
+load();
+setInterval(load,REFRESH);
+</script>
+</body>
+</html>
