@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>比賽即時監控 Dashboard</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system;
+  background: #0f0f0f;
+  color: #f0f0f0;
+}
+
+/* 頂部 */
+#topBar {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: #0f0f0f;
+  padding: 10px 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+#judgeToggle {
+  background: #3498db;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.judge-mode #judgeToggle { background:#555; }
+
+#lastUpdate {
+  font-size: 14px;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.container {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+  padding: 12px;
+  height: calc(100vh - 56px);
+}
+
+.card {
+  background: #1a1a1a;
+  border-radius: 10px;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.judge-mode .container { grid-template-columns: 1fr; }
+.judge-mode #teamView { display:none; }
+
+h2 { font-size: 26px; margin: 6px 0 12px; }
+
+/* 小隊 */
+.team {
+  border-bottom:1px solid #333;
+  padding:8px;
+  border-radius:8px;
+  margin-bottom:10px;
+}
+
+/* 🔴 小隊首次報到未齊 6 */
+.team-alert {
+  background:#3a0f0f;
+  border:2px solid #e74c3c;
+}
+
+/* 成員 */
+.member {
+  display:inline-block;
+  min-width:46px;
+  margin:4px;
+  padding:6px 0;
+  text-align:center;
+  font-weight:700;
+  border-radius:6px;
+  color:#000;
+}
+.green { background:#2ecc71; }
+.red { background:#e74c3c; }
+.yellow { background:#f1c40f; }
+
+.team-title {
+  font-size:22px;
+  font-weight:700;
+}
+
+/* 右邊（保留，不再重列） */
+</style>
+</head>
+
+<body>
+
+<div id="topBar">
+  <button id="judgeToggle" onclick="toggleJudgeMode()">👩‍⚖️ 進入裁判模式</button>
+  <div id="lastUpdate">—</div>
+</div>
+
+<div class="container">
+  <div class="card" id="teamView"><h2>🏁 小隊即時狀態</h2></div>
+  <div class="card" id="eventView"><h2>🎯 比賽項目</h2></div>
+</div>
+
+<script>
+const CSV_URL =
+"https://docs.google.com/spreadsheets/d/e/2PACX-1vRqSPDvPhygiENSoBsVXQLMmy9kdwMNcFGYXZ7KSoLvGAVoLlFyUIKusstepG2Mz41o403RSl2a3c6G/pub?gid=1769609556&single=true&output=csv";
+
+const EVENTS = ["項目一","項目二","項目三","項目四","項目五","項目六"];
+const EVENT_REQUIRE = 6;
+const REFRESH_INTERVAL = 30000;
+
+const params = new URLSearchParams(location.search);
+const isJudgeMode = params.get("judge") === "1";
+if (isJudgeMode) document.body.classList.add("judge-mode");
+
+document.getElementById("judgeToggle").textContent =
+  isJudgeMode ? "⬅️ 返回控制台" : "👩‍⚖️ 進入裁判模式";
+
+function toggleJudgeMode(){
+  if (document.body.classList.contains("judge-mode")) params.delete("judge");
+  else params.set("judge","1");
+  location.search = params.toString();
+}
+
+let latest = {};
+
+function loadData(){
+  fetch(CSV_URL + "&_=" + Date.now())
+    .then(r=>r.text())
+    .then(parseCSV);
+}
+
+function parseCSV(csv){
+  const rows = csv.trim().split("\n").slice(1).map(r=>r.split(","));
+  const data = {};
+
+  rows.forEach(r=>{
+    const memberId = r[2];
+    const action = r[3];
+    if (!memberId || !action) return;
+
+    const team = memberId.slice(0,2);
+    const member = memberId.slice(2);
+
+    data[team] ??= { first:new Set(), anyEvent:new Set(), anyone:new Set() };
+    data[team].anyone.add(member);
+
+    if (action === "首次報到") data[team].first.add(member);
+    if (EVENTS.includes(action)) data[team].anyEvent.add(member);
+  });
+
+  latest = data;
+  renderTeams();
+  updateTime();
+}
+
+function renderTeams(){
+  const root = document.getElementById("teamView");
+  root.innerHTML = "<h2>🏁 小隊即時狀態</h2>";
+
+  Object.keys(latest).sort().forEach(team=>{
+    const firstCount = latest[team].first.size;
+    const playedCount = latest[team].anyEvent.size;
+
+    if (firstCount === 0 && playedCount === 0) return;
+
+    const div = document.createElement("div");
+    div.className = "team";
+
+    /* ✅ 唯一紅隊條件 */
+    if (firstCount > 0 && firstCount < EVENT_REQUIRE) {
+      div.classList.add("team-alert");
+    }
+
+    div.innerHTML =
+      `<div class="team-title">
+        隊伍 ${team}｜首次報到 ${firstCount}｜已參賽 ${playedCount}
+      </div>`;
+
+    [...latest[team].anyone].sort().forEach(m=>{
+      let cls = "red";
+      if (!latest[team].first.has(m) && latest[team].anyEvent.has(m)) cls="yellow";
+      else if (latest[team].first.has(m) && latest[team].anyEvent.has(m)) cls="green";
+      div.innerHTML += `<span class="member ${cls}">${m}</span>`;
+    });
+
+    root.appendChild(div);
+  });
+}
+
+function updateTime(){
+  const d = new Date();
+  document.getElementById("lastUpdate").textContent =
+    `最後更新：${d.toLocaleTimeString("zh-HK",{hour12:false})}`;
+}
+
+loadData();
+setInterval(loadData, REFRESH_INTERVAL);
+</script>
+
+</body>
+</html>
