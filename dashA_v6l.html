@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<title>CC Shield 即時簽到系統</title>
+
+<style>
+body{margin:0;font-family:system-ui;background:#0f0f0f;color:#eee}
+.topbar{display:flex;gap:10px;padding:10px;background:#111;border-bottom:1px solid #333}
+button{background:#333;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-size:15px;cursor:pointer}
+button.active{background:#2ecc71;color:#000}
+.spacer{flex:1}
+.container{display:grid;grid-template-columns:3fr 1fr;gap:12px;padding:12px}
+.panel{background:#1b1b1b;border-radius:12px;padding:12px;overflow:auto}
+h2{margin:0 0 6px}
+
+.event-title{
+  font-size:22px;
+  margin:14px 0 6px;
+  border-bottom:1px solid #333;
+  padding-bottom:4px
+}
+.team-row{
+  padding:6px 8px;
+  margin:4px 0;
+  background:#111;
+  border-radius:6px;
+  cursor:pointer
+}
+.team-row.fail{color:#ff6b6b}
+.team-row.pass{color:#2ecc71}
+.team-detail{font-size:14px;margin-top:4px;padding-left:12px}
+.bad{color:#ff6b6b}
+.good{color:#2ecc71}
+
+#debug{display:none;background:#000;color:#0f0;padding:10px;font-size:13px}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+  <button id="normalBtn" class="active">一般模式</button>
+  <button id="judgeBtn">裁判模式</button>
+  <button id="debugBtn">Debug</button>
+  <div class="spacer"></div>
+  <div id="time"></div>
+</div>
+
+<div class="container" id="layout">
+  <div class="panel" id="teamPanel">
+    <h2>🏁 小隊即時狀態</h2>
+    <div id="teams"></div>
+  </div>
+
+  <div class="panel" id="eventPanel">
+    <h2>🎯 比賽項目</h2>
+    <div id="events"></div>
+  </div>
+</div>
+
+<pre id="debug"></pre>
+
+<script>
+const DATA_URL="https://docs.google.com/spreadsheets/d/1dwK703awpcqW6A3BofDA8cjNSlER2C2Tz5wIu7wr6XQ/gviz/tq?tqx=out:json";
+const ITEM_ORDER=["項目一","項目二","項目三","項目四","項目五","項目六"];
+
+let showDebug=false;
+debugBtn.onclick=()=>debug.style.display=debug.style.display==="block"?"none":"block";
+
+function norm(id){
+ return id.replace(/[０-９]/g,d=>String.fromCharCode(d.charCodeAt(0)-0xFEE0)).trim();
+}
+
+async function update(){
+ const raw=await (await fetch(DATA_URL,{cache:"no-store"})).text();
+ const json=JSON.parse(raw.substring(raw.indexOf("{"),raw.lastIndexOf("}")+1));
+ const cols=json.table.cols.map(c=>c.label);
+ const rows=json.table.rows.map(r=>{
+   const o={};r.c.forEach((c,i)=>o[cols[i]]=c?.v??"");return o;
+ });
+
+ const teams={},events={};
+
+ rows.forEach(r=>{
+  const id=r["成員 ID"],item=r["簽到項目"];
+  if(!id||!item||item==="首次報到") return;
+  const m=norm(id).match(/^(\d+)([A-Z])$/);
+  if(!m) return;
+  const team=m[1].padStart(2,"0"),mem=m[2];
+  teams[team]??=new Set();
+  teams[team].add(mem);
+  events[item]??={};
+  events[item][team]??=new Set();
+  events[item][team].add(mem);
+ });
+
+ events.innerHTML="";
+ ITEM_ORDER.filter(i=>events[i]).forEach(item=>{
+  const title=document.createElement("div");
+  title.className="event-title";
+  title.textContent=item;
+  events.appendChild(title);
+
+  Object.keys(events[item]).sort().forEach(t=>{
+   const signed=events[item][t];
+   const all=teams[t]||new Set();
+   const row=document.createElement("div");
+   row.className="team-row "+(signed.size===6?"pass":"fail");
+   row.textContent=`${signed.size===6?"✅":"❌"} 隊伍 ${t} (${signed.size}/6)`;
+   const detail=document.createElement("div");
+   detail.className="team-detail";
+   detail.style.display="none";
+   detail.innerHTML=
+    `<span class="good">已簽：${[...signed].join(" ")||"-"}</span><br>`+
+    `<span class="bad">未簽：${[...all].filter(x=>!signed.has(x)).join(" ")||"-"}</span>`;
+   row.onclick=()=>detail.style.display=detail.style.display==="none"?"block":"none";
+   events.appendChild(row);
+   events.appendChild(detail);
+  });
+ });
+
+ debug.textContent=JSON.stringify(rows.slice(-5),null,2);
+ time.textContent="最後更新："+new Date().toLocaleTimeString("zh-HK");
+}
+
+update();
+setInterval(update,20000);
+</script>
+
+</body>
+</html>
