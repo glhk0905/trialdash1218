@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<title>CC Shield 即時簽到系統</title>
+<style>
+body{margin:0;font-family:system-ui;background:#0f0f0f;color:#eee}
+.topbar{display:flex;gap:10px;padding:10px;background:#111;border-bottom:1px solid #333}
+button{background:#333;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-size:15px;cursor:pointer}
+button.active{background:#2ecc71;color:#000}
+.spacer{flex:1}
+
+.container{display:grid;grid-template-columns:3fr 1fr;gap:12px;padding:12px}
+.panel{background:#1b1b1b;border-radius:12px;padding:12px;overflow:auto}
+h2{margin:0 0 6px}
+
+/* legend */
+.legend{display:flex;gap:16px;font-size:14px;margin-bottom:10px;flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:6px}
+.dot{width:14px;height:14px;border-radius:4px}
+.green{background:#2ecc71;color:#000}
+.red{background:#e74c3c;color:#000}
+.orange{background:#f39c12;color:#000}
+
+/* 小隊 */
+#teams{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.team{border:2px solid #333;border-radius:12px;padding:10px}
+.team.alert{border-color:#e74c3c;background:#2a1212}
+.team-header{font-size:17px;font-weight:bold;margin-bottom:6px}
+.member{display:inline-block;margin:4px;padding:6px 10px;border-radius:8px;font-weight:bold}
+
+/* 比賽項目 */
+.event-title{font-size:20px;font-weight:800;margin:12px 0 6px}
+.event-team{cursor:pointer;padding:6px 0;border-bottom:1px solid #333}
+.event-team.not-full{color:#e74c3c;font-weight:700}
+.event-detail{padding-left:22px;font-size:15px;display:none}
+
+/* debug */
+#debug{display:none;margin:12px;background:#000;color:#0f0;padding:10px;font-size:13px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button id="normalBtn" class="active">一般模式</button>
+  <button id="judgeBtn">裁判模式</button>
+  <button id="debugBtn">Debug</button>
+  <div class="spacer"></div>
+  <div id="time"></div>
+</div>
+
+<div class="container" id="layout">
+  <div class="panel" id="teamPanel">
+    <h2>🏁 小隊即時狀態</h2>
+    <div class="legend">
+      <span><i class="dot green"></i> 已報到＋已參賽</span>
+      <span><i class="dot red"></i> 已報到未參賽</span>
+      <span><i class="dot orange"></i> 未報到但已參賽</span>
+    </div>
+    <div id="teams"></div>
+  </div>
+
+  <div class="panel">
+    <h2>🎯 比賽項目</h2>
+    <div id="events"></div>
+  </div>
+</div>
+
+<pre id="debug"></pre>
+
+<script>
+/* 🔒 CSV URL 鎖死 */
+const CSV_URL =
+"https://docs.google.com/spreadsheets/d/e/2PACX-1vRqSPDvPhygiENSoBsVXQLMmy9kdwMNcFGYXZ7KSoLvGAVoLlFyUIKusstepG2Mz41o403RSl2a3c6G/pub?output=csv";
+
+let isJudge=false, showDebug=false;
+
+/* ===== Buttons ===== */
+normalBtn.onclick=()=>{isJudge=false;updateLayout()};
+judgeBtn.onclick=()=>{isJudge=true;updateLayout()};
+debugBtn.onclick=()=>{
+  showDebug=!showDebug;
+  debug.style.display=showDebug?"block":"none";
+};
+
+function updateLayout(){
+  normalBtn.classList.toggle("active",!isJudge);
+  judgeBtn.classList.toggle("active",isJudge);
+  teamPanel.style.display=isJudge?"none":"block";
+  layout.style.gridTemplateColumns=isJudge?"1fr":"3fr 1fr";
+}
+
+/* ===== CSV ===== */
+function parseCSV(text){
+  const lines=text.trim().split(/\r?\n/);
+  const headers=lines[0].split(",").map(h=>h.trim());
+  return lines.slice(1).map(line=>{
+    const cols=line.split(",");
+    const o={};
+    headers.forEach((h,i)=>o[h]=cols[i]?.trim());
+    return o;
+  });
+}
+
+async function update(){
+  const res=await fetch(CSV_URL,{cache:"no-store"});
+  const text=await res.text();
+  const rows=parseCSV(text);
+
+  const teamsData={}, eventsData={};
+
+  rows.forEach(r=>{
+    const id=r["成員 ID"];
+    const item=r["簽到項目"];
+    if(!id||!item)return;
+
+    const team=id.slice(0,2);
+    const m=id.slice(2);
+
+    teamsData[team]??={members:new Set(),checkin:new Set(),event:new Set()};
+    teamsData[team].members.add(m);
+
+    if(item==="首次報到"){
+      teamsData[team].checkin.add(m);
+    }else{
+      teamsData[team].event.add(m);
+      eventsData[item]??={};
+      eventsData[item][team]??=new Set();
+      eventsData[item][team].add(m);
+    }
+  });
+
+  /* ===== 小隊即時狀態 ===== */
+  teams.innerHTML="";
+  Object.keys(teamsData).sort().forEach(t=>{
+    const d=teamsData[t];
+    const box=document.createElement("div");
+    box.className="team"+(d.event.size<6?" alert":"");
+    box.innerHTML=`<div class="team-header">隊伍 ${t} ｜ 出席 ${d.checkin.size} ｜ 已參賽 ${d.event.size}</div>`;
+    [...d.members].sort().forEach(m=>{
+      const s=document.createElement("span");
+      s.className="member "+(
+        d.checkin.has(m)&&d.event.has(m)?"green":
+        d.checkin.has(m)?"red":"orange");
+      s.textContent=m;
+      box.appendChild(s);
+    });
+    teams.appendChild(box);
+  });
+
+  /* ===== 比賽項目（中文數字正確排序） ===== */
+  const zhNum={一:1,二:2,三:3,四:4,五:5,六:6,七:7,八:8,九:9,十:10};
+
+  events.innerHTML="";
+  Object.keys(eventsData)
+    .sort((a,b)=>{
+      const na=zhNum[a.replace("項目","")]||99;
+      const nb=zhNum[b.replace("項目","")]||99;
+      return na-nb;
+    })
+    .forEach(ev=>{
+      const title=document.createElement("div");
+      title.className="event-title";
+      title.textContent=ev;
+      events.appendChild(title);
+
+      Object.keys(eventsData[ev])
+        .sort((a,b)=>Number(a)-Number(b))
+        .forEach(t=>{
+          const c=eventsData[ev][t].size;
+          const full=c===6;
+          const line=document.createElement("div");
+          line.className="event-team"+(full?"":" not-full");
+          line.textContent=(full?"✅ ":"❌ ")+`隊伍 ${t} (${c}/6)`;
+
+          const det=document.createElement("div");
+          det.className="event-detail";
+          det.textContent=[...eventsData[ev][t]].join(" ");
+
+          let open=false;
+          line.onclick=()=>{
+            open=!open;
+            det.style.display=open?"block":"none";
+          };
+          events.append(line,det);
+        });
+    });
+
+  /* ===== Debug：只顯示尾 5 個 record ===== */
+  debug.textContent=JSON.stringify(rows.slice(-5),null,2);
+
+  time.textContent="最後更新："+new Date().toLocaleTimeString("zh-HK");
+}
+
+updateLayout();
+update();
+setInterval(update,20000);
+</script>
+
+</body>
+</html>
