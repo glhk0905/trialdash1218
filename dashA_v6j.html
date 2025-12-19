@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<title>CC Shield 即時簽到系統</title>
+
+<style>
+body{margin:0;font-family:system-ui;background:#0f0f0f;color:#eee}
+.topbar{display:flex;gap:10px;padding:10px;background:#111;border-bottom:1px solid #333}
+button{background:#333;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-size:15px;cursor:pointer}
+button.active{background:#2ecc71;color:#000}
+.spacer{flex:1}
+.container{display:grid;grid-template-columns:3fr 1fr;gap:12px;padding:12px}
+.panel{background:#1b1b1b;border-radius:12px;padding:12px;overflow:auto}
+h2{margin:0 0 6px}
+.legend{display:flex;gap:16px;font-size:14px;margin-bottom:10px;flex-wrap:wrap}
+.legend span{display:flex;align-items:center;gap:6px}
+.dot{width:14px;height:14px;border-radius:4px}
+.green{background:#2ecc71;color:#000}
+.red{background:#e74c3c;color:#000}
+.orange{background:#f39c12;color:#000}
+#teams{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.team{border:2px solid #333;border-radius:12px;padding:10px}
+.team.alert{border-color:#e74c3c;background:#2a1212}
+.team-header{font-size:17px;font-weight:bold;margin-bottom:6px}
+.member{display:inline-block;margin:4px;padding:6px 10px;border-radius:8px;font-weight:bold}
+#debug{display:none;margin:12px;background:#000;color:#0f0;padding:10px;font-size:13px;white-space:pre-wrap}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+  <button id="normalBtn" class="active">一般模式</button>
+  <button id="judgeBtn">裁判模式</button>
+  <button id="debugBtn">Debug</button>
+  <div class="spacer"></div>
+  <div id="time"></div>
+</div>
+
+<div class="container" id="layout">
+  <div class="panel" id="teamPanel">
+    <h2>🏁 小隊即時狀態</h2>
+    <div class="legend">
+      <span><i class="dot green"></i> 已報到＋已參賽</span>
+      <span><i class="dot red"></i> 已報到未參賽</span>
+      <span><i class="dot orange"></i> 未報到但已參賽</span>
+    </div>
+    <div id="teams"></div>
+  </div>
+
+  <div class="panel">
+    <h2>🎯 比賽項目</h2>
+    <div id="events"></div>
+  </div>
+</div>
+
+<pre id="debug"></pre>
+
+<script>
+const DATA_URL =
+"https://docs.google.com/spreadsheets/d/1dwK703awpcqW6A3BofDA8cjNSlER2C2Tz5wIu7wr6XQ/gviz/tq?tqx=out:json";
+
+let isJudge=false,showDebug=false;
+normalBtn.onclick=()=>{isJudge=false;updateLayout()};
+judgeBtn.onclick=()=>{isJudge=true;updateLayout()};
+debugBtn.onclick=()=>{showDebug=!showDebug;debug.style.display=showDebug?"block":"none"};
+
+function updateLayout(){
+  normalBtn.classList.toggle("active",!isJudge);
+  judgeBtn.classList.toggle("active",isJudge);
+  teamPanel.style.display=isJudge?"none":"block";
+  layout.style.gridTemplateColumns=isJudge?"1fr":"3fr 1fr";
+}
+
+function normalizeId(id){
+  return id.replace(/[０-９]/g,d=>String.fromCharCode(d.charCodeAt(0)-0xFEE0)).trim();
+}
+
+async function update(){
+  const raw=await (await fetch(DATA_URL,{cache:"no-store"})).text();
+  const json=JSON.parse(raw.substring(raw.indexOf("{"),raw.lastIndexOf("}")+1));
+
+  const cols=json.table.cols.map(c=>c.label);
+  const rows=json.table.rows.map(r=>{
+    const o={};
+    r.c.forEach((cell,i)=>o[cols[i]]=cell?.v??"");
+    return o;
+  });
+
+  const teamsData={};
+
+  rows.forEach(r=>{
+    const idRaw=r["成員 ID"];
+    const item=r["簽到項目"];
+    if(!idRaw||!item) return;
+
+    const id=normalizeId(idRaw);
+    const m=id.match(/^(\d+)([A-Z])$/);
+    if(!m) return;
+
+    const team=m[1].padStart(2,"0");
+    const mem=m[2];
+
+    teamsData[team]??={members:new Set(),checkin:new Set(),event:new Set()};
+    teamsData[team].members.add(mem);
+
+    if(item==="首次報到")
+      teamsData[team].checkin.add(mem);
+    else
+      teamsData[team].event.add(mem);
+  });
+
+  teams.innerHTML="";
+  Object.keys(teamsData).sort().forEach(t=>{
+    const d=teamsData[t];
+    const box=document.createElement("div");
+    box.className="team"+(d.event.size<d.members.size?" alert":"");
+    box.innerHTML=`<div class="team-header">
+      隊伍 ${t} ｜ 出席 ${d.checkin.size} ｜ 已參賽 ${d.event.size}/${d.members.size}
+    </div>`;
+    [...d.members].sort().forEach(m=>{
+      const s=document.createElement("span");
+      s.className="member "+(
+        d.checkin.has(m)&&d.event.has(m)?"green":
+        d.checkin.has(m)?"red":"orange");
+      s.textContent=m;
+      box.appendChild(s);
+    });
+    teams.appendChild(box);
+  });
+
+  debug.textContent=JSON.stringify(rows.slice(-5),null,2);
+  time.textContent="最後更新："+new Date().toLocaleTimeString("zh-HK");
+}
+
+updateLayout();
+update();
+setInterval(update,20000);
+</script>
+
+</body>
+</html>
