@@ -1,0 +1,35 @@
+<script>
+async function update(){
+  const res=await fetch(CSV_URL,{cache:"no-store"});
+  const text=await res.text();
+  const rows=parseCSV(text);
+
+  const teamsData={},eventsData={};
+
+  rows.forEach(r=>{
+    const id=getVal(r,"成員 ID");
+    const item=getVal(r,"簽到項目");
+    if(!id||!item)return;
+
+    /* ✅ 唯一真正修正：穩陣解析隊伍 ID */
+    const match = id.match(/^(\d+)/);
+    if(!match) return;
+    const team = match[1].padStart(2,"0");
+    const m = id.replace(match[1],"");
+
+    teamsData[team]??={members:new Set(),checkin:new Set(),event:new Set()};
+    teamsData[team].members.add(m);
+
+    if(item.includes("首次")){
+      teamsData[team].checkin.add(m);
+    }else{
+      teamsData[team].event.add(m);
+      eventsData[item]??={};
+      eventsData[item][team]??=new Set();
+      eventsData[item][team].add(m);
+    }
+  });
+
+  /* 其餘 render code 完全不變 */
+}
+</script>
