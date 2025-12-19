@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<title>即時簽到系統</title>
+<style>
+body{
+  margin:0;
+  font-family:system-ui,-apple-system;
+  background:#0f0f0f;
+  color:#eee
+}
+.topbar{
+  display:flex;
+  gap:10px;
+  padding:10px;
+  background:#111;
+  border-bottom:1px solid #333
+}
+button{
+  background:#333;
+  color:#fff;
+  border:none;
+  border-radius:6px;
+  padding:8px 12px;
+  font-size:15px;
+  cursor:pointer
+}
+button.active{
+  background:#2ecc71;
+  color:#000
+}
+.spacer{flex:1}
+
+.container{
+  display:grid;
+  grid-template-columns:3fr 1fr;
+  gap:12px;
+  padding:12px
+}
+.panel{
+  background:#1b1b1b;
+  border-radius:12px;
+  padding:12px;
+  overflow:auto
+}
+h2{margin:0 0 6px}
+
+/* ===== Legend ===== */
+.legend{
+  display:flex;
+  gap:16px;
+  font-size:14px;
+  opacity:.9;
+  margin-bottom:10px;
+  flex-wrap:wrap
+}
+.legend span{
+  display:flex;
+  align-items:center;
+  gap:6px
+}
+.legend .dot{
+  width:14px;
+  height:14px;
+  border-radius:4px
+}
+.legend .green{background:#2ecc71}
+.legend .red{background:#e74c3c}
+.legend .orange{background:#f39c12}
+
+/* ===== 小隊 ===== */
+#teams{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:10px
+}
+.team{
+  border:2px solid #333;
+  border-radius:12px;
+  padding:10px
+}
+.team.alert{
+  border-color:#e74c3c;
+  background:#2a1212
+}
+.team-header{
+  font-size:17px;
+  font-weight:bold;
+  margin-bottom:6px;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap
+}
+
+/* ===== 成員 ===== */
+.member{
+  display:inline-block;
+  margin:4px;
+  padding:6px 10px;
+  border-radius:8px;
+  font-weight:bold
+}
+.green{background:#2ecc71;color:#000}
+.red{background:#e74c3c;color:#000}
+.orange{background:#f39c12;color:#000}
+
+/* ===== 比賽項目 ===== */
+.event-team{
+  cursor:pointer;
+  padding:6px 0;
+  border-bottom:1px solid #333
+}
+.event-detail{
+  padding-left:14px;
+  font-size:14px;
+  display:none
+}
+
+/* ===== Debug ===== */
+#debug{
+  display:none;
+  margin:12px;
+  background:#000;
+  color:#0f0;
+  padding:10px;
+  font-size:13px;
+  white-space:pre-wrap
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button id="normalBtn" class="active">一般模式</button>
+  <button id="judgeBtn">裁判模式</button>
+  <button id="debugBtn">Debug</button>
+  <div class="spacer"></div>
+  <div id="time"></div>
+</div>
+
+<div class="container">
+  <div class="panel" id="teamPanel">
+    <h2>🏁 小隊即時狀態</h2>
+
+    <!-- ✅ 顏色註解 -->
+    <div class="legend">
+      <span><i class="dot green"></i> 已報到＋已參賽</span>
+      <span><i class="dot red"></i> 已報到未參賽</span>
+      <span><i class="dot orange"></i> 未報到但已參賽</span>
+    </div>
+
+    <div id="teams"></div>
+  </div>
+
+  <div class="panel" id="eventPanel">
+    <h2>🎯 比賽項目</h2>
+    <div id="events"></div>
+  </div>
+</div>
+
+<pre id="debug"></pre>
+
+<script>
+const CSV_URL="YOUR_CSV_URL_HERE";
+let showDebug=false;
+
+debugBtn.onclick=()=>{
+  showDebug=!showDebug;
+  debug.style.display=showDebug?"block":"none";
+};
+
+function parseCSV(t){
+  const l=t.trim().split(/\r?\n/);
+  const h=l[0].split(",");
+  return l.slice(1).map(r=>{
+    const c=r.split(",");
+    const o={};
+    h.forEach((x,i)=>o[x]=c[i]);
+    return o;
+  });
+}
+
+async function update(){
+  const res=await fetch(CSV_URL,{cache:"no-store"});
+  const text=await res.text();
+  const rows=parseCSV(text);
+
+  const teamsData={}, eventsData={};
+
+  rows.forEach(r=>{
+    const id=r["成員 ID"];
+    const item=r["簽到項目"];
+    if(!id||!item)return;
+
+    const team=id.slice(0,2);
+    const m=id.slice(2);
+
+    teamsData[team]??={members:new Set(),checkin:new Set(),event:new Set()};
+    teamsData[team].members.add(m);
+
+    if(item==="首次報到"){
+      teamsData[team].checkin.add(m);
+    }else{
+      teamsData[team].event.add(m);
+      eventsData[item]??={};
+      eventsData[item][team]??=new Set();
+      eventsData[item][team].add(m);
+    }
+  });
+
+  /* ===== 小隊 ===== */
+  teams.innerHTML="";
+  Object.keys(teamsData).sort().forEach(t=>{
+    const d=teamsData[t];
+    const total=d.members.size;
+    const alert=total<6;
+
+    const box=document.createElement("div");
+    box.className="team"+(alert?" alert":"");
+    box.innerHTML=`
+      <div class="team-header">
+        隊伍 ${t} ｜ 出席：${d.checkin.size} ｜ 已參賽：${d.event.size}
+      </div>
+    `;
+
+    [...d.members].sort().forEach(m=>{
+      let cls="";
+      if(d.checkin.has(m)&&d.event.has(m)) cls="green";
+      else if(d.checkin.has(m)) cls="red";
+      else if(d.event.has(m)) cls="orange";
+      else return;
+      box.innerHTML+=`<span class="member ${cls}">${m}</span>`;
+    });
+
+    teams.appendChild(box);
+  });
+
+  /* ===== 比賽項目 ===== */
+  events.innerHTML="";
+  Object.keys(eventsData).forEach(ev=>{
+    events.innerHTML+=`<b>${ev}</b><br>`;
+    Object.keys(eventsData[ev]).forEach(t=>{
+      const line=document.createElement("div");
+      line.className="event-team";
+      line.textContent=`▶ 隊伍 ${t} (${eventsData[ev][t].size}/6)`;
+
+      const det=document.createElement("div");
+      det.className="event-detail";
+      det.textContent=[...eventsData[ev][t]].join(" ");
+
+      line.onclick=()=>{
+        det.style.display = det.style.display ? "" : "block";
+      };
+
+      events.append(line,det);
+    });
+  });
+
+  /* ===== Debug ===== */
+  debug.textContent = rows.slice(-5).map(r =>
+    `${r["時間"]||""} | ${r["成員 ID"]} | ${r["簽到項目"]}`
+  ).join("\n");
+
+  time.textContent="最後更新："+new Date().toLocaleTimeString("zh-HK");
+}
+
+update();
+setInterval(update,20000);
+</script>
+
+</body>
+</html>
