@@ -1,0 +1,293 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2867
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 <!DOCTYPE html>\
+<html lang="zh-HK">\
+<head>\
+<meta charset="UTF-8">\
+<title>CC Shield \uc0\u21363 \u26178 \u31805 \u21040 \u31995 \u32113  (Stable)</title>\
+\
+<style>\
+body\{margin:0;font-family:system-ui;background:#0f0f0f;color:#eee\}\
+.topbar\{display:flex;gap:10px;padding:12px;background:#111;border-bottom:1px solid #333\}\
+button\{background:#333;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:16px\}\
+.spacer\{flex:1\}\
+#time\{font-size:18px;font-weight:bold\}\
+\
+.container\{display:grid;grid-template-columns:3fr 1fr;gap:14px;padding:14px\}\
+.panel\{background:#1b1b1b;border-radius:14px;padding:14px\}\
+\
+h2\{margin:0 0 8px;font-size:22px\}\
+\
+.legend\{font-size:16px;margin-bottom:10px\}\
+.legend span\{margin-right:16px\}\
+\
+.team-grid\{\
+ display:grid;\
+ grid-template-columns:repeat(3,1fr);\
+ gap:12px\
+\}\
+\
+.team-card\{\
+ background:#141414;\
+ border:2px solid #333;\
+ border-radius:12px;\
+ padding:12px;\
+ font-size:18px;\
+\}\
+.team-card.bad\{\
+ border-color:#ff5c5c;\
+ background:#2a0f0f;\
+\}\
+\
+.team-title\{font-weight:bold;margin-bottom:8px\}\
+\
+.member\{\
+ display:inline-block;\
+ width:30px;height:30px;\
+ line-height:30px;\
+ text-align:center;\
+ border-radius:6px;\
+ margin:3px;\
+ font-weight:bold;\
+\}\
+.m-ok\{background:#2ecc71;color:#000\}\
+.m-warn\{background:#f1c40f;color:#000\}\
+.m-bad\{background:#e74c3c;color:#fff\}\
+\
+/* ===== \uc0\u27604 \u36093 \u38917 \u30446  ===== */\
+.event-title\{font-size:20px;margin:14px 0 6px;border-bottom:1px solid #333\}\
+\
+.event-team\{\
+ background:#111;\
+ border-radius:8px;\
+ padding:8px 10px;\
+ margin:6px 0;\
+ cursor:pointer;\
+\}\
+.event-team.pass\{color:#2ecc71\}\
+.event-team.fail\{color:#ff6b6b\}\
+\
+.event-detail\{\
+ display:none;\
+ font-size:14px;\
+ margin-top:6px;\
+ padding-left:10px;\
+\}\
+\
+.notice\{\
+ color:#f1c40f;\
+ font-size:14px;\
+ margin-top:6px;\
+\}\
+\
+#debug\{display:none;background:#000;color:#0f0;padding:10px;font-size:13px;white-space:pre-wrap;\}\
+</style>\
+</head>\
+\
+<body>\
+\
+<div class="topbar">\
+  <button>\uc0\u19968 \u33324 \u27169 \u24335 </button>\
+  <button id="debugBtn">Debug</button>\
+  <div class="spacer"></div>\
+  <div id="time">\uc0\u21516 \u27493 \u20013 \'85</div>\
+</div>\
+\
+<div class="container">\
+  <div class="panel">\
+    <h2>\uc0\u55356 \u57281  \u23567 \u38538 \u21363 \u26178 \u29376 \u24907 </h2>\
+    <div class="legend">\
+      <span>\uc0\u55357 \u57314  \u24050 \u22577 \u21040 \u65291 \u24050 \u21443 \u36093 </span>\
+      <span>\uc0\u55357 \u57313  \u24050 \u22577 \u21040 \u26410 \u21443 \u36093 </span>\
+      <span>\uc0\u55357 \u56628  \u26410 \u22577 \u21040 \u20294 \u24050 \u21443 \u36093 </span>\
+    </div>\
+    <div id="teams" class="team-grid"></div>\
+  </div>\
+\
+  <div class="panel">\
+    <h2>\uc0\u55356 \u57263  \u27604 \u36093 \u38917 \u30446 </h2>\
+    <div id="eventPanel"></div>\
+    <div id="status" class="notice"></div>\
+  </div>\
+</div>\
+\
+<pre id="debug"></pre>\
+\
+<script>\
+/* ========= FIXED VERSION =========\
+- Updated ID: 1dwK703awpcqW6A3BofDA8cjNSlER2C2Tz5wIu7wr6XQ\
+- Robust JSON parsing: handles prefixes like /*O_o*/\
+/* ================================= */\
+\
+// \uc0\u20351 \u29992 \u20102 \u20320 \u25552 \u20379 \u30340  Spreadsheet ID\
+const SPREADSHEET_ID = "1dwK703awpcqW6A3BofDA8cjNSlER2C2Tz5wIu7wr6XQ";\
+const DATA_URL = `https://docs.google.com/spreadsheets/d/$\{SPREADSHEET_ID\}/gviz/tq?tqx=out:json&headers=1`;\
+\
+const teamsEl = document.getElementById("teams");\
+const eventPanel = document.getElementById("eventPanel");\
+const debugEl = document.getElementById("debug");\
+const timeEl = document.getElementById("time");\
+const statusEl = document.getElementById("status");\
+const debugBtn = document.getElementById("debugBtn");\
+\
+debugBtn.onclick = () => debugEl.style.display =\
+ debugEl.style.display === "block" ? "none" : "block";\
+\
+let lastGoodData = null;\
+\
+function norm(id)\{\
+ if(!id) return "";\
+ // \uc0\u20840 \u24418 \u36681 \u21322 \u24418 \
+ return id.replace(/[\uc0\u65296 -\u65305 ]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).trim();\
+\}\
+\
+async function fetchData()\{\
+ try\{\
+  const res = await fetch(DATA_URL, \{cache: "no-store"\});\
+  const text = await res.text();\
+\
+  // === \uc0\u20462 \u27491 \u37325 \u40670 \u38283 \u22987  ===\
+  // \uc0\u31227 \u38500 \u21407 \u26412 \u30340  startsWith \u27298 \u26597 \u65292 \u25913 \u28858 \u25628 \u23563 \u31532 \u19968 \u20491  \{ \u21644 \u26368 \u24460 \u19968 \u20491  \}\
+  const jsonStart = text.indexOf("\{");\
+  const jsonEnd = text.lastIndexOf("\}");\
+\
+  if(jsonStart === -1 || jsonEnd === -1) \{\
+     throw "Cannot find JSON brackets in response";\
+  \}\
+\
+  // \uc0\u25847 \u21462 \u20094 \u28136 \u30340  JSON \u23383 \u20018 \
+  const jsonString = text.substring(jsonStart, jsonEnd + 1);\
+  const json = JSON.parse(jsonString);\
+  // === \uc0\u20462 \u27491 \u37325 \u40670 \u32080 \u26463  ===\
+\
+  lastGoodData = json;\
+  statusEl.textContent = "";\
+  return json;\
+ \}catch(e)\{\
+  console.error("Fetch Error:", e);\
+  statusEl.textContent = "\uc0\u9888 \u65039  \u36039 \u26009 \u21516 \u27493 \u19981 \u31337  (\u39023 \u31034 \u24555 \u21462 \u20013 )";\
+  return lastGoodData;\
+ \}\
+\}\
+\
+function render(json)\{\
+ if(!json) return;\
+\
+ // \uc0\u30906 \u20445  table \u32080 \u27083 \u23384 \u22312 \
+ if(!json.table || !json.table.cols || !json.table.rows) return;\
+\
+ const cols = json.table.cols.map(c => c?.label ?? "");\
+ const rows = json.table.rows.map(r => \{\
+  const o = \{\}; \
+  // \uc0\u38450 \u21574 \u27231 \u21046 \u65306 \u30906 \u20445  c \u23384 \u22312 \
+  if(r.c) \{\
+    r.c.forEach((cell, i) => \{\
+        o[cols[i]] = cell?.v ?? "";\
+    \});\
+  \}\
+  return o;\
+ \});\
+\
+ const teams = \{\}, events = \{\};\
+\
+ rows.forEach(r => \{\
+  const id = r["\uc0\u25104 \u21729  ID"];\
+  const item = r["\uc0\u31805 \u21040 \u38917 \u30446 "];\
+  \
+  if(!id || !item) return;\
+\
+  const normalizedId = norm(id);\
+  // \uc0\u27491 \u35215 \u34920 \u36948 \u24335 \u23565 \u25033 \u20320 \u30340  ID \u26684 \u24335  (\u25976 \u23383 +\u33521 \u25991 \u65292 \u20363 \u22914  01A)\
+  const m = normalizedId.match(/^(\\d+)([A-Z])$/);\
+  \
+  if(!m) return;\
+\
+  const t = m[1].padStart(2, "0"); // \uc0\u38538 \u20237 \u32232 \u34399 \u35036 \u38646 \
+  const mem = m[2]; // \uc0\u25104 \u21729 \u20195 \u34399 \
+\
+  // \uc0\u21021 \u22987 \u21270 \u36039 \u26009 \u32080 \u27083 \
+  if(!teams[t]) teams[t] = \{check: new Set(), play: new Set(), all: new Set()\};\
+  teams[t].all.add(mem);\
+\
+  if(item === "\uc0\u39318 \u27425 \u22577 \u21040 ") \{\
+      teams[t].check.add(mem);\
+  \} else \{\
+    teams[t].play.add(mem);\
+    \
+    // \uc0\u34389 \u29702 \u27604 \u36093 \u38917 \u30446 \
+    if(!events[item]) events[item] = \{\};\
+    if(!events[item][t]) events[item][t] = \{play: new Set()\};\
+    events[item][t].play.add(mem);\
+  \}\
+ \});\
+\
+ /* ===== \uc0\u28210 \u26579 \u23567 \u38538  ===== */\
+ teamsEl.innerHTML = "";\
+ Object.keys(teams).sort().forEach(t => \{\
+  const d = teams[t];\
+  const card = document.createElement("div");\
+  // \uc0\u36889 \u35041 \u20551 \u35373 \u27599 \u38538  6 \u20154 \u65292 \u23569 \u26044  6 \u20154 \u35222 \u28858  bad\
+  card.className = "team-card" + (d.check.size < 6 ? " bad" : "");\
+  \
+  card.innerHTML = `<div class="team-title">\uc0\u38538 \u20237  $\{t\} \u65372  \u20986 \u24109  $\{d.check.size\} \u65372  \u24050 \u21443 \u36093  $\{d.play.size\}</div>`;\
+  \
+  // \uc0\u28210 \u26579  A, B, C... \u25104 \u21729 \
+  [...d.all].sort().forEach(m => \{\
+    let cls = "m-ok";\
+    if(d.play.has(m) && !d.check.has(m)) cls = "m-bad"; // \uc0\u26377 \u29609 \u27794 \u31805 \u21040 \
+    else if(d.check.has(m) && !d.play.has(m)) cls = "m-warn"; // \uc0\u26377 \u31805 \u21040 \u27794 \u29609 \
+    \
+    card.innerHTML += `<span class="member $\{cls\}">$\{m\}</span>`;\
+  \});\
+  teamsEl.appendChild(card);\
+ \});\
+\
+ /* ===== \uc0\u28210 \u26579 \u27604 \u36093 \u38917 \u30446  ===== */\
+ eventPanel.innerHTML = "";\
+ Object.keys(events).forEach(item => \{\
+  eventPanel.innerHTML += `<div class="event-title">$\{item\}</div>`;\
+  \
+  Object.keys(events[item]).sort().forEach(t => \{\
+    const playList = [...events[item][t].play].sort();\
+    // \uc0\u25214 \u20986 \u26377 \u31805 \u21040 \u20294 \u27794 \u29609 \u36889 \u20491 \u38917 \u30446 \u30340 \u20154 \
+    const notPlayList = [...teams[t].check].filter(m => !events[item][t].play.has(m)).sort();\
+\
+    const row = document.createElement("div");\
+    // \uc0\u20551 \u35373 \u28415  6 \u20154 \u25165 \u31639  pass\
+    row.className = "event-team " + (playList.length >= 6 ? "pass" : "fail");\
+    row.textContent = `\uc0\u38538 \u20237  $\{t\} ($\{playList.length\}/6)`;\
+\
+    const detail = document.createElement("div");\
+    detail.className = "event-detail";\
+    detail.innerHTML = `\uc0\u9989  \u24050 \u21443 \u36093 \u65306 $\{playList.join(" ") || "-"\}<br>\u55357 \u57313  \u24050 \u31805 \u26410 \u29609 \u65306 $\{notPlayList.join(" ") || "-"\}`;\
+\
+    row.onclick = () => detail.style.display =\
+      detail.style.display === "block" ? "none" : "block";\
+\
+    eventPanel.appendChild(row);\
+    eventPanel.appendChild(detail);\
+  \});\
+ \});\
+\
+ debugEl.textContent = JSON.stringify(rows.slice(-3), null, 2); // \uc0\u21482 \u39023 \u31034 \u26368 \u24460 3\u31558 debug\
+ timeEl.textContent = "\uc0\u26368 \u24460 \u26356 \u26032 \u65306 " + new Date().toLocaleTimeString("zh-HK");\
+\}\
+\
+async function update()\{\
+ const json = await fetchData();\
+ render(json);\
+\}\
+\
+// \uc0\u21855 \u21205 \
+update();\
+// \uc0\u27599  10 \u31186 \u26356 \u26032 \u19968 \u27425  (\u21407 \u26412 \u26159  20000ms\u65292 \u31245 \u24494 \u21152 \u24555 \u19968 \u40670 \u21453 \u25033 )\
+setInterval(update, 10000);\
+</script>\
+\
+</body>\
+</html>}
