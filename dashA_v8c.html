@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+<meta charset="UTF-8">
+<title>CC Shield 即時簽到系統 (Stable)</title>
+
+<style>
+body{margin:0;font-family:system-ui;background:#0f0f0f;color:#eee}
+.topbar{display:flex;gap:10px;padding:12px;background:#111;border-bottom:1px solid #333}
+button{background:#333;color:#fff;border:none;border-radius:6px;padding:8px 14px;font-size:16px}
+.spacer{flex:1}
+#time{font-size:18px;font-weight:bold}
+
+.container{display:grid;grid-template-columns:3fr 1fr;gap:14px;padding:14px}
+.panel{background:#1b1b1b;border-radius:14px;padding:14px}
+
+h2{margin:0 0 8px;font-size:22px}
+
+.legend{font-size:16px;margin-bottom:10px}
+.legend span{margin-right:16px}
+
+.team-grid{
+ display:grid;
+ grid-template-columns:repeat(3,1fr);
+ gap:12px
+}
+
+.team-card{
+ background:#141414;
+ border:2px solid #333;
+ border-radius:12px;
+ padding:12px;
+ font-size:18px;
+}
+.team-card.bad{
+ border-color:#ff5c5c;
+ background:#2a0f0f;
+}
+
+.team-title{font-weight:bold;margin-bottom:8px}
+
+.member{
+ display:inline-block;
+ width:30px;height:30px;
+ line-height:30px;
+ text-align:center;
+ border-radius:6px;
+ margin:3px;
+ font-weight:bold;
+}
+.m-ok{background:#2ecc71;color:#000}
+.m-warn{background:#f1c40f;color:#000}
+.m-bad{background:#e74c3c;color:#fff}
+
+/* ===== 比賽項目 ===== */
+.event-title{font-size:20px;margin:14px 0 6px;border-bottom:1px solid #333}
+
+.event-team{
+ background:#111;
+ border-radius:8px;
+ padding:8px 10px;
+ margin:6px 0;
+ cursor:pointer;
+}
+.event-team.pass{color:#2ecc71}
+.event-team.fail{color:#ff6b6b}
+
+.event-detail{
+ display:none;
+ font-size:14px;
+ margin-top:6px;
+ padding-left:10px;
+}
+
+.notice{
+ color:#f1c40f;
+ font-size:14px;
+ margin-top:6px;
+}
+
+#debug{display:none;background:#000;color:#0f0;padding:10px;font-size:13px;white-space:pre-wrap;}
+</style>
+</head>
+
+<body>
+
+<div class="topbar">
+  <button>一般模式</button>
+  <button id="debugBtn">Debug</button>
+  <div class="spacer"></div>
+  <div id="time">同步中…</div>
+</div>
+
+<div class="container">
+  <div class="panel">
+    <h2>🏁 小隊即時狀態</h2>
+    <div class="legend">
+      <span>🟢 已報到＋已參賽</span>
+      <span>🟡 已報到未參賽</span>
+      <span>🔴 未報到但已參賽</span>
+    </div>
+    <div id="teams" class="team-grid"></div>
+  </div>
+
+  <div class="panel">
+    <h2>🎯 比賽項目</h2>
+    <div id="eventPanel"></div>
+    <div id="status" class="notice"></div>
+  </div>
+</div>
+
+<pre id="debug"></pre>
+
+<script>
+/* ========= FIXED VERSION =========
+- Updated ID: 1dwK703awpcqW6A3BofDA8cjNSlER2C2Tz5wIu7wr6XQ
+- Robust JSON parsing: handles prefixes like /*O_o*/
+/* ================================= */
+
+// 使用了你提供的 Spreadsheet ID
+const SPREADSHEET_ID = "1dwK703awpcqW6A3BofDA8cjNSlER2C2Tz5wIu7wr6XQ";
+const DATA_URL = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:json&headers=1`;
+
+const teamsEl = document.getElementById("teams");
+const eventPanel = document.getElementById("eventPanel");
+const debugEl = document.getElementById("debug");
+const timeEl = document.getElementById("time");
+const statusEl = document.getElementById("status");
+const debugBtn = document.getElementById("debugBtn");
+
+debugBtn.onclick = () => debugEl.style.display =
+ debugEl.style.display === "block" ? "none" : "block";
+
+let lastGoodData = null;
+
+function norm(id){
+ if(!id) return "";
+ // 全形轉半形
+ return id.replace(/[０-９]/g, d => String.fromCharCode(d.charCodeAt(0) - 0xFEE0)).trim();
+}
+
+async function fetchData(){
+ try{
+  const res = await fetch(DATA_URL, {cache: "no-store"});
+  const text = await res.text();
+
+  // === 修正重點開始 ===
+  // 移除原本的 startsWith 檢查，改為搜尋第一個 { 和最後一個 }
+  const jsonStart = text.indexOf("{");
+  const jsonEnd = text.lastIndexOf("}");
+
+  if(jsonStart === -1 || jsonEnd === -1) {
+     throw "Cannot find JSON brackets in response";
+  }
+
+  // 擷取乾淨的 JSON 字串
+  const jsonString = text.substring(jsonStart, jsonEnd + 1);
+  const json = JSON.parse(jsonString);
+  // === 修正重點結束 ===
+
+  lastGoodData = json;
+  statusEl.textContent = "";
+  return json;
+ }catch(e){
+  console.error("Fetch Error:", e);
+  statusEl.textContent = "⚠️ 資料同步不穩 (顯示快取中)";
+  return lastGoodData;
+ }
+}
+
+function render(json){
+ if(!json) return;
+
+ // 確保 table 結構存在
+ if(!json.table || !json.table.cols || !json.table.rows) return;
+
+ const cols = json.table.cols.map(c => c?.label ?? "");
+ const rows = json.table.rows.map(r => {
+  const o = {}; 
+  // 防呆機制：確保 c 存在
+  if(r.c) {
+    r.c.forEach((cell, i) => {
+        o[cols[i]] = cell?.v ?? "";
+    });
+  }
+  return o;
+ });
+
+ const teams = {}, events = {};
+
+ rows.forEach(r => {
+  const id = r["成員 ID"];
+  const item = r["簽到項目"];
+  
+  if(!id || !item) return;
+
+  const normalizedId = norm(id);
+  // 正規表達式對應你的 ID 格式 (數字+英文，例如 01A)
+  const m = normalizedId.match(/^(\d+)([A-Z])$/);
+  
+  if(!m) return;
+
+  const t = m[1].padStart(2, "0"); // 隊伍編號補零
+  const mem = m[2]; // 成員代號
+
+  // 初始化資料結構
+  if(!teams[t]) teams[t] = {check: new Set(), play: new Set(), all: new Set()};
+  teams[t].all.add(mem);
+
+  if(item === "首次報到") {
+      teams[t].check.add(mem);
+  } else {
+    teams[t].play.add(mem);
+    
+    // 處理比賽項目
+    if(!events[item]) events[item] = {};
+    if(!events[item][t]) events[item][t] = {play: new Set()};
+    events[item][t].play.add(mem);
+  }
+ });
+
+ /* ===== 渲染小隊 ===== */
+ teamsEl.innerHTML = "";
+ Object.keys(teams).sort().forEach(t => {
+  const d = teams[t];
+  const card = document.createElement("div");
+  // 這裡假設每隊 6 人，少於 6 人視為 bad
+  card.className = "team-card" + (d.check.size < 6 ? " bad" : "");
+  
+  card.innerHTML = `<div class="team-title">隊伍 ${t} ｜ 出席 ${d.check.size} ｜ 已參賽 ${d.play.size}</div>`;
+  
+  // 渲染 A, B, C... 成員
+  [...d.all].sort().forEach(m => {
+    let cls = "m-ok";
+    if(d.play.has(m) && !d.check.has(m)) cls = "m-bad"; // 有玩沒簽到
+    else if(d.check.has(m) && !d.play.has(m)) cls = "m-warn"; // 有簽到沒玩
+    
+    card.innerHTML += `<span class="member ${cls}">${m}</span>`;
+  });
+  teamsEl.appendChild(card);
+ });
+
+ /* ===== 渲染比賽項目 ===== */
+ eventPanel.innerHTML = "";
+ Object.keys(events).forEach(item => {
+  eventPanel.innerHTML += `<div class="event-title">${item}</div>`;
+  
+  Object.keys(events[item]).sort().forEach(t => {
+    const playList = [...events[item][t].play].sort();
+    // 找出有簽到但沒玩這個項目的人
+    const notPlayList = [...teams[t].check].filter(m => !events[item][t].play.has(m)).sort();
+
+    const row = document.createElement("div");
+    // 假設滿 6 人才算 pass
+    row.className = "event-team " + (playList.length >= 6 ? "pass" : "fail");
+    row.textContent = `隊伍 ${t} (${playList.length}/6)`;
+
+    const detail = document.createElement("div");
+    detail.className = "event-detail";
+    detail.innerHTML = `✅ 已參賽：${playList.join(" ") || "-"}<br>🟡 已簽未玩：${notPlayList.join(" ") || "-"}`;
+
+    row.onclick = () => detail.style.display =
+      detail.style.display === "block" ? "none" : "block";
+
+    eventPanel.appendChild(row);
+    eventPanel.appendChild(detail);
+  });
+ });
+
+ debugEl.textContent = JSON.stringify(rows.slice(-3), null, 2); // 只顯示最後3筆debug
+ timeEl.textContent = "最後更新：" + new Date().toLocaleTimeString("zh-HK");
+}
+
+async function update(){
+ const json = await fetchData();
+ render(json);
+}
+
+// 啟動
+update();
+// 每 10 秒更新一次 (原本是 20000ms，稍微加快一點反應)
+setInterval(update, 10000);
+</script>
+
+</body>
+</html>
